@@ -1,32 +1,31 @@
 import AppKit
-import ServiceManagement
+import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let overlay = OverlayController()
-    private let pinch = PinchWatcher()
+    private let input = InputWatcher()
     private var hotKey: FinderHotKey?
-    private var pinchItem: NSMenuItem!
-
-    private var pinchEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "pinchEnabled") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "pinchEnabled") }
-    }
+    private var settingsWindow: NSWindow?
+    private var showItem: NSMenuItem!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         hotKey = FinderHotKey { [weak self] in self?.overlay.toggle() }
 
-        pinch.isEnabled = pinchEnabled
-        pinch.onPinchIn = { [weak self] in
-            guard let self, FinderBridge.finderIsFrontmost, !self.overlay.isShown else { return }
-            self.overlay.show()
-        }
-        pinch.onPinchOut = { [weak self] in self?.overlay.hide() }
+        input.isOverlayShown = { [weak self] in self?.overlay.isShown ?? false }
+        input.onIn = { [weak self] in self?.overlay.show() }
+        input.onOut = { [weak self] in self?.overlay.hide() }
 
-        // Prompts for Accessibility the first time; needed for the tab bar and for pinch.
+        Preferences.shared.onChange = { [weak self] in
+            if SupportedApp.frontmost == nil { self?.overlay.hide(animated: false) }
+            self?.hotKey?.update()
+            self?.updateShowItem()
+        }
+
+        // Prompts for Accessibility the first time; needed for the tab bar and for gestures.
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         if AXIsProcessTrustedWithOptions(options) {
-            pinch.start()
+            input.start()
         } else {
             waitForAccessibility()
         }
@@ -34,68 +33,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
     }
 
-    /// Accessibility is granted in System Settings while we're running; start the pinch tap once it lands.
+    /// Accessibility is granted in System Settings while we're running; start the event tap once it lands.
     private func waitForAccessibility() {
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
             guard AXIsProcessTrusted() else { return }
             timer.invalidate()
-            self?.pinch.start()
+            self?.input.start()
         }
     }
+
+    /// tabview://show, tabview://hide, tabview://toggle, tabview://settings — for Raycast, Shortcuts, scripts.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            switch url.host {
+            case "show": showTabs()
+            case "hide": overlay.hide()
+            case "toggle": overlay.isShown ? overlay.hide() : showTabs()
+            case "settings": openSettings()
+            default: break
+            }
+        }
+    }
+
+    // MARK: - Menu bar
 
     private func buildMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Tabview")
 
         let menu = NSMenu()
-        let show = NSMenuItem(title: "Show Finder Tabs", action: #selector(showTabs), keyEquivalent: "\\")
-        show.keyEquivalentModifierMask = [.command, .shift]
-        menu.addItem(show)
+        showItem = NSMenuItem(title: "Show All Tabs", action: #selector(showTabs), keyEquivalent: "")
+        menu.addItem(showItem)
+        menu.addItem(NSMenuItem(title: "Hide Tabs", action: #selector(hideTabs), keyEquivalent: ""))
         menu.addItem(.separator())
-
-        pinchItem = NSMenuItem(title: "Pinch to Show Tabs", action: #selector(togglePinch), keyEquivalent: "")
-        pinchItem.state = pinchEnabled ? .on : .off
-        menu.addItem(pinchItem)
-
-        let login = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin), keyEquivalent: "")
-        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(login)
-
-        menu.addItem(NSMenuItem(title: "Accessibility Settings…", action: #selector(openAccessibility), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: "About Tabview", action: #selector(openAbout), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Tabview", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.items.forEach { if $0.action != #selector(NSApplication.terminate(_:)) { $0.target = self } }
         statusItem.menu = menu
+        updateShowItem()
+    }
+
+    private func updateShowItem() {
+        let prefs = Preferences.shared
+        guard let showItem else { return }
+        if prefs.shortcutEnabled {
+            showItem.keyEquivalent = Shortcut.keyName(prefs.shortcut.keyCode).lowercased()
+            showItem.keyEquivalentModifierMask = prefs.shortcut.modifiers
+        } else {
+            showItem.keyEquivalent = ""
+        }
     }
 
     @objc private func showTabs() {
-        // Picking from the menu bar leaves Finder frontmost underneath, so just open the grid.
-        FinderBridge.finderApp?.activate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self.overlay.show() }
-    }
-
-    @objc private func togglePinch() {
-        pinchEnabled.toggle()
-        pinch.isEnabled = pinchEnabled
-        pinchItem.state = pinchEnabled ? .on : .off
-    }
-
-    @objc private func toggleLogin(_ item: NSMenuItem) {
-        do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            } else {
-                try SMAppService.mainApp.register()
-            }
-        } catch {
-            NSSound.beep()
+        // From the menu bar no supported app may be in front; fall back to bringing Finder forward.
+        if SupportedApp.frontmost != nil {
+            overlay.show()
+        } else {
+            SupportedApp.finder.running?.activate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.overlay.show() }
         }
-        item.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
 
-    @objc private func openAccessibility() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    @objc private func hideTabs() { overlay.hide(animated: false) }
+
+    @objc private func openSettings() {
+        if settingsWindow == nil {
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView()))
+            window.title = "Tabview Settings"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            window.center()
+            settingsWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
     }
+
+    @objc private func openAbout() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/nanadotam/tabview")!)
+    }
+}
+
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--render-readme" {
+    // Offscreen README art; never touches the screen.
+    _ = NSApplication.shared
+    NSApp.setActivationPolicy(.prohibited)
+    ReadmeRenderer.run(output: URL(fileURLWithPath: CommandLine.arguments[2]),
+                       demo: CommandLine.arguments.count > 3 ? URL(fileURLWithPath: CommandLine.arguments[3]) : nil)
+    exit(0)
 }
 
 let app = NSApplication.shared

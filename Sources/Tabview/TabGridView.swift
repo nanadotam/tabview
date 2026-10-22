@@ -6,9 +6,12 @@ import SwiftUI
 @Observable
 final class TabGridModel {
     var tabs: [FinderTab] = []
+    var app: SupportedApp = .finder
     var query = ""
     var highlighted = 0
     var presented = false
+    /// Offscreen renders (README screenshots) can't use live blur, so they draw a solid backdrop.
+    var solidBackdrop = false
 
     var onOpen: (FinderTab) -> Void = { _ in }
     var onClose: (FinderTab) -> Void = { _ in }
@@ -33,7 +36,7 @@ struct TabGridView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("\(model.tabs.count) Finder Tab\(model.tabs.count == 1 ? "" : "s")")
+                Text("\(model.tabs.count) \(model.app.name) Tab\(model.tabs.count == 1 ? "" : "s")")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -48,6 +51,18 @@ struct TabGridView: View {
                 .frame(width: 220, height: 28)
                 .background(.background.opacity(0.7), in: Capsule())
                 .overlay(Capsule().strokeBorder(.separator))
+
+                Button { model.onDismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .background(.background.opacity(0.7), in: Circle())
+                        .overlay(Circle().strokeBorder(.separator))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Close (Esc)")
             }
             .padding(.horizontal, 28)
             .padding(.top, 22)
@@ -57,7 +72,7 @@ struct TabGridView: View {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 22) {
                         ForEach(Array(model.visibleTabs.enumerated()), id: \.element.id) { index, tab in
-                            TabCard(tab: tab, highlighted: index == model.highlighted)
+                            TabCard(tab: tab, showsFolder: model.app.showsFolders, highlighted: index == model.highlighted)
                                 .id(tab.id)
                                 .onTapGesture { model.onOpen(tab) }
                                 .onHover { if $0 { model.highlighted = index } }
@@ -73,21 +88,23 @@ struct TabGridView: View {
                                     .padding(.leading, 6)
                                     .padding(.top, 5)
                                 }
-                                .scaleEffect(model.presented ? 1 : 0.92)
+                                .scaleEffect(model.presented ? 1 : 0.94)
                                 .opacity(model.presented ? 1 : 0)
-                                .animation(.spring(duration: 0.38, bounce: 0.18).delay(Double(index) * 0.02),
+                                .animation(.spring(duration: 0.24, bounce: 0.12).delay(min(Double(index), 12) * 0.008),
                                            value: model.presented)
                         }
-                        if model.query.isEmpty {
+                        if model.query.isEmpty, model.app.canOpenNewTab {
                             NewTabCard()
                                 .onTapGesture { model.onNewTab() }
                                 .opacity(model.presented ? 1 : 0)
-                                .animation(.easeOut(duration: 0.3).delay(0.1), value: model.presented)
+                                .animation(.easeOut(duration: 0.2).delay(0.05), value: model.presented)
                         }
                     }
                     .padding(.horizontal, 28)
                     .padding(.bottom, 28)
                 }
+                // Clicking empty space dismisses, like Safari.
+                .background(Color.black.opacity(0.0001).onTapGesture { model.onDismiss() })
                 .onChange(of: model.highlighted) {
                     if model.visibleTabs.indices.contains(model.highlighted) {
                         withAnimation { scroller.scrollTo(model.visibleTabs[model.highlighted].id) }
@@ -96,18 +113,29 @@ struct TabGridView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.regularMaterial)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.55))
+        .background {
+            if model.solidBackdrop {
+                // Safari's overview grey, in both appearances.
+                Color(nsColor: NSColor(name: nil) { appearance in
+                    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                        ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 0.88, alpha: 1)
+                })
+            } else {
+                Rectangle().fill(.regularMaterial)
+                Color(nsColor: .windowBackgroundColor).opacity(0.55)
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .scaleEffect(model.presented ? 1 : 1.04)
+        .scaleEffect(model.presented ? 1 : 1.03)
         .opacity(model.presented ? 1 : 0)
-        .animation(.spring(duration: 0.3, bounce: 0.1), value: model.presented)
+        .animation(.spring(duration: 0.2, bounce: 0.05), value: model.presented)
         .onAppear { searchFocused = true }
     }
 }
 
 private struct TabCard: View {
     let tab: FinderTab
+    let showsFolder: Bool
     let highlighted: Bool
 
     var body: some View {
@@ -127,9 +155,16 @@ private struct TabCard: View {
             .frame(height: 30)
             .background(.background)
 
-            FolderPreview(url: tab.url)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .textBackgroundColor))
+            // The preview lives in an overlay so a tall image can never stretch the card.
+            Color(nsColor: .textBackgroundColor)
+                .overlay {
+                    if showsFolder {
+                        FolderPreview(url: tab.url)
+                    } else {
+                        DocumentPreview(url: tab.url)
+                    }
+                }
+                .clipped()
         }
         .aspectRatio(1.5, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -198,40 +233,114 @@ private struct FolderPreview: View {
                 .frame(maxHeight: .infinity, alignment: .top)
             }
         }
-        .task(id: url) { if let url { items = await PreviewLoader.shared.items(in: url) } }
+        .task(id: url) {
+            guard let url else { return }
+            // Paint whatever we had last time immediately, then refresh.
+            if let cached = PreviewLoader.shared.cached(url) { items = cached }
+            items = await PreviewLoader.shared.load(url)
+        }
     }
 }
 
-struct PreviewItem: Identifiable {
+/// A Quick Look render of the document itself, like Safari's page snapshots.
+private struct DocumentPreview: View {
+    let url: URL?
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                // Fill the card width and pin to the top, like a page snapshot.
+                GeometryReader { geo in
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                        .clipped()
+                }
+            } else {
+                Image(systemName: "doc").font(.system(size: 30)).foregroundStyle(.tertiary)
+            }
+        }
+        .task(id: url) {
+            guard let url else { return }
+            if let cached = PreviewLoader.shared.cachedDocument(url) { image = cached }
+            image = await PreviewLoader.shared.loadDocument(url)
+        }
+    }
+}
+
+struct PreviewItem: Identifiable, @unchecked Sendable {
     let id: URL
     let name: String
     let image: NSImage
 }
 
-/// Loads (and caches) Quick Look thumbnails for the first items in a folder.
-actor PreviewLoader {
+/// Loads Quick Look thumbnails for the first items in a folder.
+/// Results are cached so the grid paints instantly next time; `load` always re-checks the folder.
+final class PreviewLoader: @unchecked Sendable {
     static let shared = PreviewLoader()
     private var cache: [URL: [PreviewItem]] = [:]
+    private let lock = NSLock()
 
-    func items(in folder: URL) async -> [PreviewItem] {
-        if let hit = cache[folder] { return hit }
-        let contents = (try? FileManager.default.contentsOfDirectory(
-            at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
-        let first = contents
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-            .prefix(8)
+    func cached(_ folder: URL) -> [PreviewItem]? {
+        lock.withLock { cache[folder] }
+    }
 
-        var result: [PreviewItem] = []
-        for file in first {
-            result.append(PreviewItem(id: file, name: file.lastPathComponent, image: await thumbnail(for: file)))
+    func load(_ folder: URL) async -> [PreviewItem] {
+        let files = await Task.detached(priority: .userInitiated) {
+            ((try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [])
+                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+                .prefix(8)
+        }.value
+
+        // Reuse thumbnails we already have for files that are still there.
+        let previous = Dictionary((cached(folder) ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let result = await withTaskGroup(of: (Int, PreviewItem).self) { group in
+            for (i, file) in files.enumerated() {
+                group.addTask {
+                    if let hit = previous[file] { return (i, hit) }
+                    return (i, PreviewItem(id: file, name: file.lastPathComponent, image: await Self.thumbnail(for: file)))
+                }
+            }
+            var out: [(Int, PreviewItem)] = []
+            for await item in group { out.append(item) }
+            return out.sorted { $0.0 < $1.0 }.map(\.1)
         }
-        cache[folder] = result
+        lock.withLock { cache[folder] = result }
         return result
     }
 
-    func invalidate() { cache.removeAll() }
+    private var documents: [URL: NSImage] = [:]
 
-    private func thumbnail(for file: URL) async -> NSImage {
+    func cachedDocument(_ file: URL) -> NSImage? {
+        lock.withLock { documents[file] }
+    }
+
+    func loadDocument(_ file: URL) async -> NSImage {
+        let request = QLThumbnailGenerator.Request(
+            fileAt: file, size: CGSize(width: 360, height: 360), scale: 2, representationTypes: .thumbnail)
+        let image = (try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request))?.nsImage
+            ?? NSWorkspace.shared.icon(forFile: file.path)
+        lock.withLock { documents[file] = image }
+        return image
+    }
+
+    /// Warm the cache in the background so the next open has previews ready.
+    func prefetch(_ urls: [URL], documents: Bool = false) {
+        for url in urls {
+            if documents {
+                guard cachedDocument(url) == nil else { continue }
+                Task.detached(priority: .utility) { _ = await self.loadDocument(url) }
+            } else {
+                guard cached(url) == nil else { continue }
+                Task.detached(priority: .utility) { _ = await self.load(url) }
+            }
+        }
+    }
+
+    private static func thumbnail(for file: URL) async -> NSImage {
         let request = QLThumbnailGenerator.Request(
             fileAt: file, size: CGSize(width: 64, height: 64), scale: 2, representationTypes: [.icon, .thumbnail])
         if let rep = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) {

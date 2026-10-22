@@ -2,16 +2,40 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>Tabview</string>
-    <key>CFBundleDisplayName</key><string>Tabview</string>
-    <key>CFBundleIdentifier</key><string>com.nanaamoako.tabview</string>
-    <key>CFBundleExecutable</key><string>Tabview</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
-    <key>LSMinimumSystemVersion</key><string>14.0</string>
-    <key>LSUIElement</key><true/>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>Tabview asks Finder which folder each tab is showing so it can preview it.</string>
+	<key>CFBundleDisplayName</key>
+	<string>Tabview</string>
+	<key>CFBundleExecutable</key>
+	<string>Tabview</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.nanaamoako.tabview</string>
+	<key>CFBundleName</key>
+	<string>Tabview</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.nanaamoako.tabview</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tabview</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>2</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Tabview asks Finder and Preview what each tab is showing so it can preview it.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT License</string>
 </dict>
 </plist>
