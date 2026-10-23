@@ -1,8 +1,9 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// The user's keyboard shortcut (⇧⌘\ by default, same as Safari's "Show All Tabs").
-/// Registered only while a supported app (Finder, Preview) is frontmost so other apps keep their own shortcuts.
+/// The front app's keyboard shortcut (⇧⌘\ by default, same as Safari's "Show All Tabs").
+/// Registered only while a supported app (Finder, Preview) is frontmost so other apps keep their own shortcuts,
+/// and re-registered on every app switch since each supported app can have its own.
 final class FinderHotKey {
     private var ref: EventHotKeyRef?
     private let action: () -> Void
@@ -30,10 +31,11 @@ final class FinderHotKey {
             UnregisterEventHotKey(ref)
             self.ref = nil
         }
-        let prefs = Preferences.shared
-        guard prefs.shortcutEnabled, SupportedApp.frontmost != nil else { return }
+        guard let app = SupportedApp.frontmost else { return }
+        let triggers = Preferences.shared.triggers(for: app)
+        guard triggers.shortcutEnabled else { return }
         let id = EventHotKeyID(signature: OSType(0x5442_5657), id: 1) // "TBVW"
-        RegisterEventHotKey(UInt32(prefs.shortcut.keyCode), prefs.shortcut.carbonModifiers, id,
+        RegisterEventHotKey(UInt32(triggers.shortcut.keyCode), triggers.shortcut.carbonModifiers, id,
                             GetApplicationEventTarget(), 0, &ref)
     }
 }
@@ -42,8 +44,8 @@ final class FinderHotKey {
 /// - trackpad pinch (optionally while holding a modifier), never swallowed
 /// - modifier + scroll wheel, for mouse users
 /// - an extra mouse button (middle / back / forward)
-/// Triggers only fire while the pointer is over a window of the supported app in front (or over the grid itself).
-/// Needs Accessibility permission.
+/// Triggers only fire while the pointer is over a window of the supported app in front (or over the grid itself),
+/// using that app's own trigger settings. Needs Accessibility permission.
 final class InputWatcher {
     /// "In" = pinch in: show. "Out" = pinch out: hide. Scroll and mouse button toggle.
     var onIn: () -> Void = {}
@@ -85,11 +87,16 @@ final class InputWatcher {
 
     /// Returns true to swallow the event.
     private func handle(type: CGEventType, event: CGEvent) -> Bool {
-        let prefs = Preferences.shared
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return false
+        default:
+            break
+        }
+        guard let app = SupportedApp.frontmost else { return false }
+        let prefs = Preferences.shared.triggers(for: app)
+        switch type {
 
         case .scrollWheel:
             return handleScroll(event, prefs)
@@ -112,7 +119,7 @@ final class InputWatcher {
         }
     }
 
-    private func handlePinch(_ event: CGEvent, _ prefs: Preferences) {
+    private func handlePinch(_ event: CGEvent, _ prefs: AppTriggers) {
         guard prefs.pinchEnabled, let ns = NSEvent(cgEvent: event), ns.type == .magnify else { return }
         switch ns.phase {
         case .began:
@@ -135,7 +142,7 @@ final class InputWatcher {
         }
     }
 
-    private func handleScroll(_ event: CGEvent, _ prefs: Preferences) -> Bool {
+    private func handleScroll(_ event: CGEvent, _ prefs: AppTriggers) -> Bool {
         guard prefs.scrollEnabled, prefs.scrollModifier != .none,
               prefs.scrollModifier.matches(event.flags) else { return false }
         let now = Date()

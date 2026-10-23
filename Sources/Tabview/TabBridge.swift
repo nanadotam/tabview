@@ -11,7 +11,7 @@ struct FinderTab: Identifiable {
 }
 
 /// An app whose native tab bar Tabview can show as a grid.
-struct SupportedApp: Equatable {
+struct SupportedApp: Hashable {
     let bundleID: String
     let name: String
     /// AppleScript returning `{names, locations}` for every tab, in one Apple Event.

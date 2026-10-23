@@ -137,7 +137,7 @@ final class OverlayController {
         let tabs = model.visibleTabs
         let columns = max(Int((panel.frame.width - 56 + 22) / (230 + 22)), 1)
         let typing = !model.query.isEmpty
-        let shortcut = Preferences.shared.shortcut
+        let shortcut = Preferences.shared.triggers(for: app).shortcut
         let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
 
         if event.keyCode == shortcut.keyCode, mods == shortcut.modifiers {

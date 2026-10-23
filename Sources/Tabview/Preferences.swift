@@ -83,34 +83,46 @@ struct Shortcut: Equatable {
     }
 }
 
-/// User settings, persisted in UserDefaults. Every trigger can be switched on or off independently.
+/// How one app summons the grid. Each supported app gets its own set, so Preview can leave pinch to zooming
+/// while Finder keeps it, or each app can use a different shortcut.
+struct AppTriggers: Equatable {
+    var pinchEnabled = true
+    var pinchModifier: ModifierChoice = .none
+    /// 0 = needs a big pinch, 1 = the slightest pinch fires.
+    var pinchSensitivity = 0.6
+
+    var shortcutEnabled = true
+    var shortcut: Shortcut = .showAllTabs
+
+    var scrollEnabled = false
+    var scrollModifier: ModifierChoice = .option
+
+    var mouseButtonEnabled = false
+    /// CGEvent button number: 2 = middle, 3 = back, 4 = forward.
+    var mouseButton = 2
+
+    /// Cumulative magnification needed to count as a pinch.
+    var pinchThreshold: CGFloat { CGFloat(0.30 - pinchSensitivity * 0.24) }
+
+    /// Preview zooms with a pinch, so out of the box it only listens to the shortcut.
+    static func defaults(for app: SupportedApp) -> AppTriggers {
+        var t = AppTriggers()
+        if app == .preview { t.pinchEnabled = false }
+        return t
+    }
+}
+
+/// User settings, persisted in UserDefaults. Every trigger can be switched on or off independently, per app.
 @Observable
 final class Preferences {
     static let shared = Preferences()
     private let defaults = UserDefaults.standard
 
-    var pinchEnabled: Bool { didSet { save("pinchEnabled", pinchEnabled) } }
-    var pinchModifier: ModifierChoice { didSet { save("pinchModifier", pinchModifier.rawValue) } }
-    /// 0 = needs a big pinch, 1 = the slightest pinch fires.
-    var pinchSensitivity: Double { didSet { save("pinchSensitivity", pinchSensitivity) } }
-
-    var shortcutEnabled: Bool { didSet { save("shortcutEnabled", shortcutEnabled) } }
-    var shortcut: Shortcut {
-        didSet {
-            save("shortcutKey", Int(shortcut.keyCode))
-            save("shortcutMods", Int(shortcut.modifiers.rawValue))
-        }
-    }
-
-    var scrollEnabled: Bool { didSet { save("scrollEnabled", scrollEnabled) } }
-    var scrollModifier: ModifierChoice { didSet { save("scrollModifier", scrollModifier.rawValue) } }
-
-    var mouseButtonEnabled: Bool { didSet { save("mouseButtonEnabled", mouseButtonEnabled) } }
-    /// CGEvent button number: 2 = middle, 3 = back, 4 = forward.
-    var mouseButton: Int { didSet { save("mouseButton", mouseButton) } }
-
     var finderEnabled: Bool { didSet { save("finderEnabled", finderEnabled) } }
     var previewEnabled: Bool { didSet { save("previewEnabled", previewEnabled) } }
+
+    var finder: AppTriggers { didSet { save(finder, for: .finder) } }
+    var preview: AppTriggers { didSet { save(preview, for: .preview) } }
 
     func isEnabled(_ app: SupportedApp) -> Bool {
         switch app.bundleID {
@@ -120,35 +132,59 @@ final class Preferences {
         }
     }
 
+    func triggers(for app: SupportedApp) -> AppTriggers {
+        app == .preview ? preview : finder
+    }
+
+    func setTriggers(_ triggers: AppTriggers, for app: SupportedApp) {
+        if app == .preview { preview = triggers } else { finder = triggers }
+    }
+
     /// Fires whenever anything that affects the triggers changes.
     var onChange: () -> Void = {}
 
     private init() {
-        defaults.register(defaults: [
-            "pinchEnabled": true, "pinchModifier": "none", "pinchSensitivity": 0.6,
-            "shortcutEnabled": true,
-            "shortcutKey": Int(Shortcut.showAllTabs.keyCode),
-            "shortcutMods": Int(Shortcut.showAllTabs.modifiers.rawValue),
-            "scrollEnabled": false, "scrollModifier": "option",
-            "mouseButtonEnabled": false, "mouseButton": 2,
-            "finderEnabled": true, "previewEnabled": true,
-        ])
+        defaults.register(defaults: ["finderEnabled": true, "previewEnabled": true])
         finderEnabled = defaults.bool(forKey: "finderEnabled")
         previewEnabled = defaults.bool(forKey: "previewEnabled")
-        pinchEnabled = defaults.bool(forKey: "pinchEnabled")
-        pinchModifier = ModifierChoice(rawValue: defaults.string(forKey: "pinchModifier") ?? "") ?? .none
-        pinchSensitivity = defaults.double(forKey: "pinchSensitivity")
-        shortcutEnabled = defaults.bool(forKey: "shortcutEnabled")
-        shortcut = Shortcut(keyCode: UInt16(defaults.integer(forKey: "shortcutKey")),
-                            modifiers: NSEvent.ModifierFlags(rawValue: UInt(defaults.integer(forKey: "shortcutMods"))))
-        scrollEnabled = defaults.bool(forKey: "scrollEnabled")
-        scrollModifier = ModifierChoice(rawValue: defaults.string(forKey: "scrollModifier") ?? "") ?? .option
-        mouseButtonEnabled = defaults.bool(forKey: "mouseButtonEnabled")
-        mouseButton = defaults.integer(forKey: "mouseButton")
+        finder = Self.load(.finder, from: defaults)
+        preview = Self.load(.preview, from: defaults)
     }
 
-    /// Cumulative magnification needed to count as a pinch.
-    var pinchThreshold: CGFloat { CGFloat(0.30 - pinchSensitivity * 0.24) }
+    /// Keys are "<bundle id>.<setting>". Before triggers were per app they were stored without the prefix;
+    /// those older values seed Finder, and Preview too (except pinch, which fought Preview's zoom).
+    private static func load(_ app: SupportedApp, from defaults: UserDefaults) -> AppTriggers {
+        func value(_ key: String) -> Any? {
+            defaults.object(forKey: "\(app.bundleID).\(key)") ?? (app == .preview && key == "pinchEnabled"
+                ? nil : defaults.object(forKey: key))
+        }
+        var t = AppTriggers.defaults(for: app)
+        if let v = value("pinchEnabled") as? Bool { t.pinchEnabled = v }
+        if let v = value("pinchModifier") as? String, let m = ModifierChoice(rawValue: v) { t.pinchModifier = m }
+        if let v = value("pinchSensitivity") as? Double { t.pinchSensitivity = v }
+        if let v = value("shortcutEnabled") as? Bool { t.shortcutEnabled = v }
+        if let key = value("shortcutKey") as? Int, let mods = value("shortcutMods") as? Int {
+            t.shortcut = Shortcut(keyCode: UInt16(key), modifiers: NSEvent.ModifierFlags(rawValue: UInt(mods)))
+        }
+        if let v = value("scrollEnabled") as? Bool { t.scrollEnabled = v }
+        if let v = value("scrollModifier") as? String, let m = ModifierChoice(rawValue: v) { t.scrollModifier = m }
+        if let v = value("mouseButtonEnabled") as? Bool { t.mouseButtonEnabled = v }
+        if let v = value("mouseButton") as? Int { t.mouseButton = v }
+        return t
+    }
+
+    private func save(_ t: AppTriggers, for app: SupportedApp) {
+        let values: [String: Any] = [
+            "pinchEnabled": t.pinchEnabled, "pinchModifier": t.pinchModifier.rawValue,
+            "pinchSensitivity": t.pinchSensitivity,
+            "shortcutEnabled": t.shortcutEnabled,
+            "shortcutKey": Int(t.shortcut.keyCode), "shortcutMods": Int(t.shortcut.modifiers.rawValue),
+            "scrollEnabled": t.scrollEnabled, "scrollModifier": t.scrollModifier.rawValue,
+            "mouseButtonEnabled": t.mouseButtonEnabled, "mouseButton": t.mouseButton,
+        ]
+        for (key, value) in values { defaults.set(value, forKey: "\(app.bundleID).\(key)") }
+        onChange()
+    }
 
     private func save(_ key: String, _ value: Any) {
         defaults.set(value, forKey: key)

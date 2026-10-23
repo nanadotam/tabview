@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let overlay = OverlayController()
     private let input = InputWatcher()
@@ -71,16 +71,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Tabview", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.items.forEach { if $0.action != #selector(NSApplication.terminate(_:)) { $0.target = self } }
+        menu.delegate = self
         statusItem.menu = menu
         updateShowItem()
     }
 
+    func menuWillOpen(_ menu: NSMenu) { updateShowItem() }
+
+    /// Shows the shortcut of the app in front (Finder's when neither is).
     private func updateShowItem() {
-        let prefs = Preferences.shared
+        let triggers = Preferences.shared.triggers(for: SupportedApp.frontmost ?? .finder)
         guard let showItem else { return }
-        if prefs.shortcutEnabled {
-            showItem.keyEquivalent = Shortcut.keyName(prefs.shortcut.keyCode).lowercased()
-            showItem.keyEquivalentModifierMask = prefs.shortcut.modifiers
+        if triggers.shortcutEnabled {
+            showItem.keyEquivalent = Shortcut.keyName(triggers.shortcut.keyCode).lowercased()
+            showItem.keyEquivalentModifierMask = triggers.shortcut.modifiers
         } else {
             showItem.keyEquivalent = ""
         }

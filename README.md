@@ -39,7 +39,7 @@ Tabview gives Finder and Preview the same grid. It's a tiny menu-bar app with no
 - **Search.** Start typing to filter tabs by name or full path.
 - **Keyboard all the way.** Arrow keys to move, <kbd>Return</kbd> to switch, <kbd>⌘W</kbd> to close a tab, <kbd>Esc</kbd> to leave.
 - **Your trigger, your way.** Trackpad pinch (optionally while holding a key), any keyboard shortcut you record, a modifier plus
-  the scroll wheel, or a spare mouse button. Turn on whichever ones suit you.
+  the scroll wheel, or a spare mouse button. Turn on whichever ones suit you, separately for Finder and Preview.
 - **Fast.** The tab list comes straight from macOS Accessibility in a few milliseconds. Folder locations and thumbnails are fetched
   in the background and cached, so the grid paints instantly.
 - **Stays out of the way.** It only reacts over Finder or Preview windows, and disappears the moment you switch to another app.
@@ -101,6 +101,10 @@ Everything lives in **menu bar icon → Settings…**
 | **Keyboard shortcut** | Everyone | Record any combo. Only registered while Finder or Preview is in front, so Safari keeps its own <kbd>⇧⌘\\</kbd>. |
 | **Modifier + scroll** | Mouse users | Hold e.g. <kbd>⌥</kbd> and flick the wheel. Swallowed over Finder so the window doesn't scroll. |
 | **Mouse button** | Mice with extra buttons | Middle click, back or forward. |
+
+Each app keeps its own set of triggers. Pick Finder or Preview at the top of Settings and set it up separately. Preview uses
+pinch to zoom, so out of the box it listens only to the shortcut. You can turn its pinch back on with a key to hold, so zooming
+out of a photo doesn't also open the grid.
 
 ### Automation
 
